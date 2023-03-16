@@ -1,8 +1,30 @@
+from fastapi import FastAPI, HTTPException
+from typing import List
+from pydantic import BaseModel
 import pandas as pd
 import mysql.connector
 import io
 from google.cloud import storage
 
+app = FastAPI()
+
+# define a Pydantic model for the new data
+class Employee(BaseModel):
+    id: int
+    name: str
+    datetime: str
+    department_id: int
+    job_id: int
+
+class Department(BaseModel):
+    id: int
+    department: str
+
+class Job(BaseModel):
+    id: int
+    job: str
+
+# define functions for extracting CSV data and loading data into MySQL tables
 def extract_csv(bucket_name, source_blob_name):
     """
     Downloads a CSV file from a Cloud Storage bucket as a pandas DataFrame.
@@ -32,45 +54,82 @@ def load_dataframe_to_sql(dataframe, user, password, host, database, table, sche
     # create a cursor object to execute SQL statements
     cursor = cnx.cursor()
 
-    # create SQL query to create the table with the specified schema
-    create_query = f"CREATE TABLE IF NOT EXISTS {table} ({', '.join([f'{col} {dtype}' for col, dtype in schema.items()])})"
-
-    # create the table in the database
-    cursor.execute(create_query)
-
     # insert data from DataFrame into MySQL table
     for index, row in dataframe.iterrows():
         # create SET string for schema
-        schema_list = [f"{col}={val}" for col, val in row.to_dict().items()]
+        schema_list = [f"{col}={val}" for col, val in schema.items()]
         schema_str = ', '.join(schema_list)
 
+        # create VALUES tuple for row data
+        values_tuple = tuple(row)
+
         # execute SQL statement
-        cursor.execute(f"INSERT INTO {table} SET {schema_str}")
+        cursor.execute(f"INSERT INTO {table} SET {schema_str}", values_tuple)
 
     # commit the changes and close the connection
     cnx.commit()
     cursor.close()
     cnx.close()
 
-def extract_and_load_csv(bucket_name, source_blob_name, user, password, host, database, table, schema):
-    """
-    Downloads a CSV file from a Cloud Storage bucket and loads its contents into a MySQL table.
-    """
-    # extract the CSV data as a pandas DataFrame
-    dataframe = extract_csv(bucket_name, source_blob_name)
+# define a POST endpoint that receives new employee data
+@app.post("/employees/")
+def create_employee(employee: Employee):
+    # create a connection to the MySQL instance
+    cnx = mysql.connector.connect(user=user, password=password, host=host, database=database)
 
-    # load the DataFrame into the MySQL table
-    load_dataframe_to_sql(dataframe, user, password, host, database, table, schema)
+    # create a cursor object to execute SQL statements
+    cursor = cnx.cursor()
 
-# set the necessary parameters
-bucket_name = 'my-bucket'
-source_blob_name = 'data.csv'
-user = 'my-user'
-password = 'my-password'
-host = 'my-host'
-database = 'my-database'
-table = 'my-table'
-schema = {'col1': 'VARCHAR(255)', 'col2': 'INT', 'col3': 'FLOAT'}
+    # validate data rules
+    if employee.job_id not in jobs['id'].values:
+        raise HTTPException(status_code=400, detail="Invalid job id")
+    if employee.department_id not in departments['id'].values:
+        raise HTTPException(status_code=400, detail="Invalid department id")
 
-# extract the CSV file from the bucket and load its contents into the MySQL table
-extract_and_load_csv(bucket_name, source_blob_name, user, password, host, database, table, schema)
+    # insert data into hired_employees table
+    cursor.execute("INSERT INTO hired_employees (id, name, datetime, department_id, job_id) VALUES (%s, %s, %s, %s, %s)", 
+                    (employee.id, employee.name, employee.datetime, employee.department_id, employee.job_id))
+
+    # commit changes and close the connection
+    cnx.commit()
+    cursor.close()
+    cnx.close()
+
+    return {"message": "Employee created successfully"}
+
+@app.post("/departments/")
+def create_department(department: Department):
+    # create a connection to the MySQL instance
+    cnx = mysql.connector.connect(user=user, password=password, host=host, database=database)
+
+    # create a cursor object to execute SQL statements
+    cursor = cnx.cursor()
+
+    # insert data into departments table
+    cursor.execute("INSERT INTO departments (id, department) VALUES (%s, %s)", (department.id, department.department))
+
+    # commit changes and close the connection
+    cnx.commit()
+    cursor.close()
+    cnx.close()
+
+    return {"message": "Department created successfully"}
+
+# define a POST endpoint that receives new job data
+@app.post("/jobs/")
+def create_job(job: Job):
+    # create a connection to the MySQL instance
+    cnx = mysql.connector.connect(user=user, password=password, host=host, database=database)
+
+    # create a cursor object to execute SQL statements
+    cursor = cnx.cursor()
+
+    # insert data into jobs table
+    cursor.execute("INSERT INTO jobs (id, job) VALUES (%s, %s)", (job.id, job.job))
+
+    # commit changes and close the connection
+    cnx.commit()
+    cursor.close()
+    cnx.close()
+
+    return {"message": "Job created successfully"}
